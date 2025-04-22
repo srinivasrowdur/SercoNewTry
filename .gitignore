@@ -72,4 +72,9 @@ logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log* 
+yarn-error.log*
+
+# Add these lines
+temp_uploads/
+.env
+application_default_credentials.json 

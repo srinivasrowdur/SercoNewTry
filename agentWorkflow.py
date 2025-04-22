@@ -6,7 +6,7 @@ from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 from dotenv import load_dotenv
-import os
+import io
 
 # Load environment variables
 load_dotenv()
@@ -14,21 +14,21 @@ load_dotenv()
 class AudioTranscriptionWorkflow(Workflow):
     description: str = "A workflow that processes audio transcription and conversation generation"
 
-    # First agent for audio transcription (similar to agent.py)
+    # First agent for audio transcription
     audio_agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         markdown=True
     )
-
-    # Second agent for text processing (conversation generation)
+    
+    # Second agent for text processing
     text_agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         markdown=True
     )
 
-    def run(self, message: str) -> Iterator[RunResponse]:
-        logger.info(f"Processing audio file: {message}")
-
+    def run(self, message: str, audio_content: bytes = None) -> Iterator[RunResponse]:
+        logger.info(f"Processing audio file")
+        
         try:
             # Check if result is cached
             if self.session_state.get(message):
@@ -36,16 +36,20 @@ class AudioTranscriptionWorkflow(Workflow):
                 yield RunResponse(run_id=self.run_id, content=self.session_state[message])
                 return
 
-            # Step 1: Audio Transcription (similar to agent.py)
+            # Step 1: Audio Transcription
             logger.info("Starting audio transcription...")
-            audio_response = self.audio_agent.run(
+            
+            # Create Audio object from bytes
+            audio = Audio(content=audio_content, format='mp3')
+            
+            transcription_response = self.audio_agent.run(
                 "Transcribe the contents of the audio file",
-                audio=[Audio(filepath=message)]
+                audio=[audio]
             )
             
             yield RunResponse(
                 run_id=self.run_id,
-                content=f"Transcription completed:\n\n{audio_response.content}"
+                content=f"Transcription completed:\n\n{transcription_response.content}"
             )
 
             # Step 2: Generate Conversation
@@ -53,7 +57,7 @@ class AudioTranscriptionWorkflow(Workflow):
             conversation_prompt = (
                 "Please create a detailed conversation of the transcription between "
                 "the two people in the transcription, clearly identify the speakers. "
-                f"Transcription: {audio_response.content}"
+                f"Transcription: {transcription_response.content}"
             )
 
             # Process conversation and stream results
