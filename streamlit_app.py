@@ -1,6 +1,6 @@
 import streamlit as st
-from agentWorkflow import AudioTranscriptionWorkflow
-from storage_helper import upload_file, verify_gcs_setup, get_signed_url
+from agentWorkflow import AudioTranscriptionWorkflow, ContentType
+from storage_helper import upload_file, get_public_url
 import time
 
 def main():
@@ -17,8 +17,8 @@ def main():
         st.session_state.conversation_parts = []
     if 'processing' not in st.session_state:
         st.session_state.processing = False
-    if 'gcs_path' not in st.session_state:
-        st.session_state.gcs_path = None
+    if 'blob_name' not in st.session_state:
+        st.session_state.blob_name = None
     
     st.title("Report Generator Agent")
     
@@ -27,34 +27,39 @@ def main():
         uploaded_file = st.file_uploader("Choose an MP3 file", type=['mp3'])
         
         if uploaded_file:
-            # Immediately upload to GCS when file is selected
             try:
-                with st.spinner("Uploading to cloud storage..."):
-                    gcs_path = upload_file(uploaded_file, uploaded_file.name)
-                    if gcs_path:
-                        st.session_state.gcs_path = gcs_path
-                        
-                        # Get signed URL for audio player
-                        signed_url = get_signed_url(gcs_path)
-                        
-                        st.write("File details:")
-                        st.write(f"- Filename: {uploaded_file.name}")
-                        
-                        # Display audio player using signed URL
-                        st.markdown("### Preview Audio")
-                        st.audio(signed_url)
-                        
-                        process_button = st.button("Process Recording", type="primary", key="process_btn")
-                        st.markdown("---")
-                        progress_placeholder = st.empty()
-                    else:
-                        st.error("Failed to upload file to cloud storage")
+                # Show file details first
+                st.write("File details:")
+                st.write(f"- Filename: {uploaded_file.name}")
+                st.write(f"- File size: {uploaded_file.size/1024:.2f} KB")
+                
+                # Show audio preview using the uploaded file directly
+                st.markdown("### Preview Audio")
+                st.audio(uploaded_file)
+                
+                # Process button
+                process_button = st.button("Process Recording", type="primary", key="process_btn")
+                progress_placeholder = st.empty()
+                
+                if process_button:
+                    with st.spinner("Uploading to cloud storage..."):
+                        blob_name = upload_file(uploaded_file, uploaded_file.name)
+                        if blob_name:
+                            st.session_state.blob_name = blob_name
+                            st.success("File uploaded successfully!")
+                            
+                            # Get public URL for processing
+                            public_url = get_public_url(blob_name)
+                            st.session_state.public_url = public_url
+                        else:
+                            st.error("Failed to upload file to cloud storage")
+                
             except Exception as e:
-                st.error(f"Error during upload: {str(e)}")
+                st.error(f"Error handling file: {str(e)}")
     
     tabs = st.tabs(["Transcription", "Conversation"])
     
-    if st.session_state.gcs_path and process_button:
+    if st.session_state.get('public_url') and process_button:
         try:
             timestamp = int(time.time())
             workflow = AudioTranscriptionWorkflow()
@@ -64,8 +69,12 @@ def main():
                 
                 for response in workflow.run(
                     message=uploaded_file.name,
-                    gcs_path=st.session_state.gcs_path  # Pass GCS path instead of audio content
+                    audio_url=st.session_state.public_url
                 ):
+                    if response.content_type == ContentType.ERROR:
+                        progress_placeholder.error(response.content)
+                        break
+                        
                     if "Transcription completed" in response.content:
                         # Handle transcription
                         transcription = response.content.split("\n\n", 1)[1]
@@ -98,7 +107,10 @@ def main():
                     
                     progress_placeholder.info(f"Processing: {response.content[:50]}...")
                 
-                progress_placeholder.success("Processing completed!")
+                if not st.session_state.get('transcription'):
+                    progress_placeholder.error("Failed to generate transcription")
+                else:
+                    progress_placeholder.success("Processing completed!")
         
         except Exception as e:
             progress_placeholder.error(f"Error during processing: {str(e)}")

@@ -7,9 +7,21 @@ from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 from dotenv import load_dotenv
 import io
+import requests
+from enum import Enum
+from dataclasses import dataclass
 
 # Load environment variables
 load_dotenv()
+
+class ContentType(Enum):
+    TEXT = "text"
+    ERROR = "error"
+
+@dataclass
+class WorkflowResponse:
+    content: str
+    content_type: ContentType
 
 class AudioTranscriptionWorkflow(Workflow):
     description: str = "A workflow that processes audio transcription and conversation generation"
@@ -26,53 +38,66 @@ class AudioTranscriptionWorkflow(Workflow):
         markdown=True
     )
 
-    def run(self, message: str, audio_content: bytes = None) -> Iterator[RunResponse]:
-        logger.info(f"Processing audio file")
+    def __init__(self):
+        super().__init__()
+        self.agent = Agent(
+            model=Gemini(id="gemini-2.0-flash-exp"),
+            markdown=True,
+        )
+
+    def run(self, message: str, audio_url: str):
+        """
+        Run the transcription workflow using a public URL
         
+        Args:
+            message: The name or context of the audio file
+            audio_url: Public URL to the audio file
+        """
         try:
-            # Check if result is cached
-            if self.session_state.get(message):
-                logger.info(f"Cache hit for '{message}'")
-                yield RunResponse(run_id=self.run_id, content=self.session_state[message])
+            # Download audio content from URL
+            response = requests.get(audio_url)
+            if response.status_code != 200:
+                yield WorkflowResponse(
+                    content=f"Error downloading audio: HTTP {response.status_code}",
+                    content_type=ContentType.ERROR
+                )
                 return
+                
+            audio_content = response.content
 
-            # Step 1: Audio Transcription
-            logger.info("Starting audio transcription...")
+            # First pass: Get transcription
+            transcription_response = self.agent.get_response(
+                "Please transcribe this audio file accurately, maintaining all speaker information.",
+                audio=[Audio(content=audio_content)]
+            )
+            yield WorkflowResponse(
+                content=f"Transcription completed\n\n{transcription_response}",
+                content_type=ContentType.TEXT
+            )
+
+            # Second pass: Generate conversation
+            conversation_prompt = """
+            Based on the transcription above, please:
+            1. Clearly identify all speakers
+            2. Format the conversation in a clean, readable way
+            3. Maintain the exact content and context
+            4. Keep medical terminology precise
+            5. Preserve any important pauses or non-verbal elements
             
-            # Create Audio object from bytes
-            audio = Audio(content=audio_content, format='mp3')
+            Please format it as a conversation.
+            """
             
-            transcription_response = self.audio_agent.run(
-                "Transcribe the contents of the audio file",
-                audio=[audio]
+            conversation_response = self.agent.get_response(conversation_prompt)
+            yield WorkflowResponse(
+                content=conversation_response,
+                content_type=ContentType.TEXT
             )
-            
-            yield RunResponse(
-                run_id=self.run_id,
-                content=f"Transcription completed:\n\n{transcription_response.content}"
-            )
-
-            # Step 2: Generate Conversation
-            logger.info("Generating conversation from transcription...")
-            conversation_prompt = (
-                "Please create a detailed conversation of the transcription between "
-                "the two people in the transcription, clearly identify the speakers. "
-                f"Transcription: {transcription_response.content}"
-            )
-
-            # Process conversation and stream results
-            yield from self.text_agent.run(
-                conversation_prompt,
-                stream=True
-            )
-
-            # Cache the final result
-            self.session_state[message] = self.text_agent.run_response.content
 
         except Exception as e:
-            error_msg = f"Error in workflow: {str(e)}"
-            logger.error(error_msg)
-            yield RunResponse(run_id=self.run_id, content=error_msg)
+            yield WorkflowResponse(
+                content=f"Error during processing: {str(e)}",
+                content_type=ContentType.ERROR
+            )
 
 def main():
     # Initialize workflow
@@ -85,7 +110,7 @@ def main():
     print("=" * 50)
     
     # Run workflow
-    response = workflow.run(message=audio_path)
+    response = workflow.run(message=audio_path, audio_url="https://example.com/signed-url")
     
     # Print responses with formatting
     print("\nWorkflow Output:")
@@ -95,7 +120,7 @@ def main():
     # Run again to demonstrate caching
     print("\nRunning again (should be cached):")
     print("=" * 50)
-    response = workflow.run(message=audio_path)
+    response = workflow.run(message=audio_path, audio_url="https://example.com/signed-url")
     pprint_run_response(response, markdown=True, show_time=True)
 
 if __name__ == "__main__":

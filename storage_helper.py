@@ -1,13 +1,16 @@
 from google.cloud import storage
 from datetime import datetime, timedelta
+import io
+import os
 
-# Your bucket name
+# Replace with your actual project and bucket details
+PROJECT_ID = "serco-sandbox-landing-01"  # The project ID you set with gcloud
 BUCKET_NAME = "sercodemoupload"
 
 def verify_gcs_setup():
     """Verify Google Cloud Storage setup"""
     try:
-        storage_client = storage.Client()
+        storage_client = storage.Client(project=PROJECT_ID)
         bucket = storage_client.bucket(BUCKET_NAME)
         bucket.reload()
         return True
@@ -20,37 +23,53 @@ def verify_gcs_setup():
         print("   Run: gcloud auth application-default login")
         return False
 
-def upload_file(file_content, original_filename):
-    """Upload a file to GCS and return the GCS path"""
+def get_storage_client():
+    """Create a storage client with ADC"""
     try:
-        # Generate blob name with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        blob_name = f"audio_uploads/{timestamp}_{original_filename}"
+        return storage.Client(project=PROJECT_ID)
+    except Exception as e:
+        print(f"Error creating storage client: {str(e)}")
+        return None
+
+def upload_file(uploaded_file, filename):
+    """Upload a file to Google Cloud Storage"""
+    try:
+        client = get_storage_client()
+        if not client:
+            raise Exception("Failed to create storage client")
+            
+        bucket = client.bucket(BUCKET_NAME)
         
-        # Upload the file
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(BUCKET_NAME)
+        # Create a unique blob name with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        blob_name = f'audio/{timestamp}_{filename}'
         blob = bucket.blob(blob_name)
         
-        # Upload the file content
-        blob.upload_from_string(
-            file_content,
-            content_type='audio/mpeg'
+        # Stream the file to GCS
+        blob.upload_from_file(
+            uploaded_file,
+            content_type=uploaded_file.type,
+            timeout=600  # 10 minute timeout for large files
         )
         
-        # Return the GCS path
-        gcs_path = f"gs://{BUCKET_NAME}/{blob_name}"
-        print(f"File uploaded successfully to: {gcs_path}")
-        return gcs_path
+        print(f"Successfully uploaded to {blob_name}")
+        return f'{blob_name}'  # Return just the path, not bucket name
     
     except Exception as e:
-        print(f"Upload error: {str(e)}")
+        print(f"Upload error details: {str(e)}")
         return None
+    finally:
+        # Reset file pointer
+        uploaded_file.seek(0)
+
+def get_public_url(blob_name):
+    """Get the public URL for a blob"""
+    return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob_name}"
 
 def list_files(prefix="audio_uploads/"):
     """List files in the bucket with given prefix"""
     try:
-        storage_client = storage.Client()
+        storage_client = storage.Client(project=PROJECT_ID)
         bucket = storage_client.bucket(BUCKET_NAME)
         blobs = bucket.list_blobs(prefix=prefix)
         
@@ -70,18 +89,22 @@ def list_files(prefix="audio_uploads/"):
 
 def get_signed_url(gcs_path):
     """Generate a signed URL for temporary access to the audio file"""
-    client = storage.Client()
-    bucket_name = gcs_path.split('/')[0]
-    blob_name = '/'.join(gcs_path.split('/')[1:])
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    
-    url = blob.generate_signed_url(
-        version="v4",
-        expiration=datetime.utcnow() + timedelta(minutes=15),
-        method="GET"
-    )
-    return url
+    try:
+        client = storage.Client(project=PROJECT_ID)
+        bucket_name = gcs_path.split('/')[0]
+        blob_name = '/'.join(gcs_path.split('/')[1:])
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.utcnow() + timedelta(minutes=15),
+            method="GET"
+        )
+        return url
+    except Exception as e:
+        print(f"Signed URL generation error: {str(e)}")
+        return None
 
 # Test the setup
 if __name__ == "__main__":
