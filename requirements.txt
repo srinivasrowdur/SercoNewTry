@@ -2,12 +2,6 @@ streamlit
 agno
 python-dotenv
 requests
-google-cloud-storage
 pathlib
 pydub
-openai
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-uuid
-google-cloud-core 
+google-genai
