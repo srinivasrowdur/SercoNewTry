@@ -4,14 +4,32 @@ from agno.media import Audio
 from agno.models.google import Gemini
 from pathlib import Path
 import os
+from datetime import datetime
+import uuid
 
-def save_uploaded_file(uploaded_file, save_dir="uploads"):
-    """Save uploaded file to local directory and return the file path"""
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
-    file_path = os.path.join(save_dir, uploaded_file.name)
+def generate_unique_filename(original_filename):
+    """Generate a unique filename with timestamp and UUID"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    extension = os.path.splitext(original_filename)[1]
+    return f"{timestamp}_{unique_id}{extension}"
+
+def save_uploaded_file(uploaded_file, save_dir="audio_uploads"):
+    """Save uploaded file to local directory with a unique name and return the file path"""
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+    upload_dir = os.path.join(base_dir, save_dir)
+    Path(upload_dir).mkdir(parents=True, exist_ok=True)
+    unique_filename = generate_unique_filename(uploaded_file.name)
+    file_path = os.path.join(upload_dir, unique_filename)
+    
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
+    
     return file_path
+
+# Initialize session state for file tracking
+if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = []
 
 st.set_page_config(page_title="Report Generator Agent", layout="wide")
 st.title("Report Generator Agent")
@@ -30,13 +48,19 @@ with st.sidebar:
     if uploaded_file:
         st.audio(uploaded_file)
         process_button = st.button("Process Recording", type="primary")
+        
+        # Display list of processed files
+        if st.session_state.processed_files:
+            st.markdown("### Previously Processed Files")
+            for file_path in st.session_state.processed_files:
+                st.text(os.path.basename(file_path))
 
 # Main content area with tabs
 tab1, tab2, tab3 = st.tabs(["Transcription", "Conversation", "Summary Report"])
 
 if uploaded_file and process_button:
     try:
-        # Save and process file
+        # Save and process file quietly
         file_path = save_uploaded_file(uploaded_file)
         
         # Transcription
@@ -113,9 +137,7 @@ if uploaded_file and process_button:
                 )
                 st.markdown(summary_response.content)
         
-        # Cleanup
-        os.remove(file_path)
         st.success("Processing completed!")
         
     except Exception as e:
-        st.error(f"Error: {str(e)}") 
+        st.error("An error occurred while processing the audio file.") 
