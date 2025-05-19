@@ -46,7 +46,7 @@ st.title("Report Generator Agent")
 # Initialize agent once
 if 'agent' not in st.session_state:
     st.session_state.agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.5-pro-preview-05-06"),
         markdown=True
     )
 
