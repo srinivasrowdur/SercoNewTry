@@ -38,7 +38,7 @@ def main():
         )
         print(transcription)
         agent2 = Agent(
-            model=Gemini(id="gemini-2.0-flash-exp"),
+            model=Gemini(id="gemini-2.5-pro-preview-05-06"),
             markdown=True,
         )
 
