@@ -14,7 +14,7 @@ class AudioTranscriptionWorkflow(Workflow):
         
         # Configure transcription agent
         self.transcription_agent = Agent(
-            model=Gemini(id="gemini-2.0-flash-exp"),
+            model=Gemini(id="gemini-2.5-pro-preview-05-06"),
             name="Transcription Agent",
             description="You are an expert transcriptionist who converts audio to accurate text.",
             markdown=False,
@@ -28,7 +28,7 @@ class AudioTranscriptionWorkflow(Workflow):
         
         # Configure conversation formatting agent
         self.conversation_agent = Agent(
-            model=Gemini(id="gemini-2.0-flash-exp"),
+            model=Gemini(id="gemini-2.5-pro-preview-05-06"),
             name="Conversation Formatter",
             description="You are an expert at formatting transcripts into readable conversations.",
             markdown=True,
