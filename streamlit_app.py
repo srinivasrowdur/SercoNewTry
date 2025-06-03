@@ -6,7 +6,6 @@ from datetime import datetime
 import uuid
 import tempfile
 import math
-from pydub import AudioSegment
 
 def generate_unique_filename(original_filename):
     """Generate a unique filename with timestamp and UUID"""
@@ -15,16 +14,31 @@ def generate_unique_filename(original_filename):
     extension = os.path.splitext(original_filename)[1]
     return f"{timestamp}_{unique_id}{extension}"
 
+def estimate_audio_duration_from_size(file_size_mb):
+    """
+    Estimate audio duration based on file size
+    Typical MP3 compression: ~1MB per minute for standard quality
+    """
+    # Conservative estimate: 0.8-1.2 MB per minute depending on quality
+    estimated_minutes = file_size_mb / 1.0  # Using 1MB per minute as baseline
+    return estimated_minutes
+
 def get_audio_duration(file_path):
-    """Get audio duration in minutes"""
+    """Get audio duration in minutes - with fallback to file size estimation"""
     try:
+        # Try using pydub if ffmpeg is available
+        from pydub import AudioSegment
         audio = AudioSegment.from_mp3(file_path)
         duration_seconds = len(audio) / 1000
         duration_minutes = duration_seconds / 60
         return duration_minutes
     except Exception as e:
-        st.error(f"Error reading audio file: {str(e)}")
-        return 0
+        # Fallback to file size estimation if ffmpeg/pydub fails
+        st.warning(f"⚠️ Could not read audio duration directly (ffmpeg not available). Using file size estimation.")
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        estimated_duration = estimate_audio_duration_from_size(file_size_mb)
+        st.info(f"📊 Estimated duration: {estimated_duration:.1f} minutes (based on file size)")
+        return estimated_duration
 
 def chunk_audio_file(file_path, chunk_duration_minutes=20):
     """
@@ -32,6 +46,7 @@ def chunk_audio_file(file_path, chunk_duration_minutes=20):
     Returns list of chunk file paths
     """
     try:
+        from pydub import AudioSegment
         audio = AudioSegment.from_mp3(file_path)
         total_duration_ms = len(audio)
         chunk_duration_ms = chunk_duration_minutes * 60 * 1000  # Convert to milliseconds
@@ -56,14 +71,16 @@ def chunk_audio_file(file_path, chunk_duration_minutes=20):
         
         return chunk_files, num_chunks
     except Exception as e:
-        st.error(f"Error chunking audio file: {str(e)}")
-        return [], 0
+        # Fallback: create chunks by file size if pydub/ffmpeg fails
+        st.warning(f"⚠️ Audio splitting not available (ffmpeg required). Processing as single large file.")
+        st.info("💡 For best results with large files, install ffmpeg: `brew install ffmpeg`")
+        return [file_path], 1  # Return original file as single "chunk"
 
 def cleanup_chunk_files(chunk_files):
     """Clean up temporary chunk files"""
     for chunk_file in chunk_files:
         try:
-            if os.path.exists(chunk_file):
+            if os.path.exists(chunk_file) and "_chunk_" in chunk_file:  # Only delete chunk files
                 os.unlink(chunk_file)
         except Exception:
             pass
@@ -88,7 +105,10 @@ def process_audio_with_genai(uploaded_file):
             if not chunk_files:
                 raise Exception("Failed to chunk audio file")
             
-            st.info(f"📋 File split into {num_chunks} chunks for processing")
+            if num_chunks > 1:
+                st.info(f"📋 File split into {num_chunks} chunks for processing")
+            else:
+                st.info(f"📋 Processing as single large file (chunking unavailable)")
             
             # Initialize the GenAI client
             client = genai.Client()
@@ -96,11 +116,16 @@ def process_audio_with_genai(uploaded_file):
             all_transcriptions = []
             
             # Process each chunk
-            progress_bar = st.progress(0)
+            if num_chunks > 1:
+                progress_bar = st.progress(0)
+            
             for i, chunk_file in enumerate(chunk_files):
                 chunk_number = i + 1
-                progress_bar.progress(chunk_number / num_chunks)
-                st.info(f"🔄 Processing chunk {chunk_number}/{num_chunks}...")
+                if num_chunks > 1:
+                    progress_bar.progress(chunk_number / num_chunks)
+                    st.info(f"🔄 Processing chunk {chunk_number}/{num_chunks}...")
+                else:
+                    st.info(f"🔄 Processing large file...")
                 
                 # Upload chunk to Google's servers
                 chunk_file_ref = client.files.upload(file=chunk_file)
@@ -112,7 +137,10 @@ def process_audio_with_genai(uploaded_file):
                 )
                 
                 chunk_transcription = response.text
-                all_transcriptions.append(f"[Chunk {chunk_number}/{num_chunks}]\n{chunk_transcription}")
+                if num_chunks > 1:
+                    all_transcriptions.append(f"[Chunk {chunk_number}/{num_chunks}]\n{chunk_transcription}")
+                else:
+                    all_transcriptions.append(chunk_transcription)
             
             # Clean up chunk files
             cleanup_chunk_files(chunk_files)
@@ -378,7 +406,8 @@ with st.sidebar:
         st.info(f"File size: {file_size_mb:.1f} MB")
         
         # Estimate duration (rough calculation: ~1MB per minute for typical MP3)
-        estimated_duration = file_size_mb * 1.0  # rough estimate
+        estimated_duration = estimate_audio_duration_from_size(file_size_mb)
+        st.info(f"Estimated duration: ~{estimated_duration:.1f} minutes")
         
         if estimated_duration > 25:
             st.warning("⚠️ Large file detected. Will use chunked processing to prevent transcription cutoff.")
@@ -401,7 +430,7 @@ if uploaded_file and process_button:
         file_ref, client, is_chunked = process_audio_with_genai(uploaded_file)
         
         if is_chunked:
-            st.success("✅ Audio chunking completed successfully!")
+            st.success("✅ Audio processing completed successfully!")
         
         # Transcription
         with tab1:
