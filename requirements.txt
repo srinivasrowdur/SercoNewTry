@@ -1,7 +1,6 @@
 streamlit
-agno
+google-genai
 python-dotenv
 requests
 pathlib
 pydub
-google-genai
